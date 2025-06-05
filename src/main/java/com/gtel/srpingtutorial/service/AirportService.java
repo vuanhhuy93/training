@@ -16,6 +16,7 @@ import com.gtel.srpingtutorial.utils.ERROR_CODE;
 import lombok.extern.log4j.Log4j2;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.data.domain.*;
 import org.springframework.data.jpa.domain.Specification;
@@ -24,10 +25,10 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.CollectionUtils;
 
-import java.util.LinkedList;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
+import java.util.*;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 @Service
 @Log4j2
@@ -40,11 +41,19 @@ public class AirportService extends BaseService {
 
     private final AirportRedisRepository airportRedisRepository;
 
+
+    private final ExecutorService fixThreadPool;
+
     private final LocationRepository locationRepository;
-    public AirportService(AirportRepository airportRepository, CustomAirportRepository customAirportRepository, AirportRedisRepository airportRedisRepository, LocationRepository locationRepository){
+    public AirportService(@Autowired  AirportRepository airportRepository,
+                          @Autowired CustomAirportRepository customAirportRepository,
+                          @Autowired AirportRedisRepository airportRedisRepository,
+                          @Autowired @Qualifier("fix") ExecutorService fixThreadPool,
+                          @Autowired LocationRepository locationRepository){
         this.airportRepository = airportRepository;
         this.customAirportRepository = customAirportRepository;
         this.airportRedisRepository = airportRedisRepository;
+        this.fixThreadPool = fixThreadPool;
         this.locationRepository = locationRepository;
     }
 
@@ -180,18 +189,22 @@ public class AirportService extends BaseService {
     public void createAirport(AirportRequest airportRequest) throws ApplicationException {
         log.info("createAirport with id  {} - name {} " , airportRequest.getIata() , airportRequest.getName());
 
-        // 1. validate request
-        this.validateCreateAirPort(airportRequest);
 
-        // 2. check with ista
+        fixThreadPool.execute(() -> {
+            // 1. validate request
+            this.validateCreateAirPort(airportRequest);
 
+            // 2. check with ista
+            this.createAirportFunction(airportRequest);
+            try {
 
-        this.createAirportFunction(airportRequest);
-        try {
-            this.createLocation(airportRequest.getLocation());
-        }catch (Exception e){
+                Thread.sleep(3000);
+                this.createLocation(airportRequest.getLocation());
+            }catch (Exception e){
 
-        }
+            }
+        });
+
 
 
 
@@ -201,12 +214,133 @@ public class AirportService extends BaseService {
         log.info("createAirport with id  {} SUCCESS " , airportRequest.getIata());
     }
 
+
+    @Transactional(noRollbackForClassName = {"App"})
+    public Map<String, Object> createAirport2(List<AirportRequest> airportRequests) throws Exception {
+
+    long startTime = System.currentTimeMillis();
+
+
+        int totalSuccess = 0;
+        int totalFail = 0;
+        List<Future<String>> futures = new ArrayList<>();
+
+        for (AirportRequest airportRequest : airportRequests){
+            futures.add( fixThreadPool.submit(()->{
+
+                try {
+
+                    this.validateCreateAirPort(airportRequest);
+                    this.createAirportFunction(airportRequest);
+                    this.createLocation(airportRequest.getLocation());
+                    return "SUCCESS";
+                }catch (Exception e){
+                    log.error("ex ", e );
+                    return "FAIL";
+                }
+            }));
+        }
+
+
+        for (Future<String> future: futures){
+
+            if (future.get(5 , TimeUnit.SECONDS).equalsIgnoreCase("SUCCESS")){
+                totalSuccess++;
+            }else {
+                totalFail++;
+            }
+        }
+
+        long endtime = System.currentTimeMillis();
+        Map<String, Object> response = new HashMap<>();
+
+        response.put("totalSuccess", totalSuccess);
+
+        response.put("totalFail", totalFail);
+        response.put("handletime", endtime - startTime);
+        return response;
+
+    }
+
+
+    @Transactional(noRollbackForClassName = {"App"})
+    public Map<String, Object> createAirport3(List<AirportRequest> airportRequests) throws Exception {
+
+        long startTime = System.currentTimeMillis();
+//        fixThreadPool.execute(() -> {
+//            // 1. validate request
+//            this.validateCreateAirPort(airportRequest);
+//
+//            // 2. check with ista
+//            this.createAirportFunction(airportRequest);
+//            try {
+//
+//                Thread.sleep(3000);
+//                this.createLocation(airportRequest.getLocation());
+//            }catch (Exception e){
+//
+//            }
+//        });
+
+        int totalSuccess = 0;
+        int totalFail = 0;
+        List<Future<String>> futures = new ArrayList<>();
+
+        for (AirportRequest airportRequest : airportRequests){
+//            futures.add( fixThreadPool.submit(()->{
+//
+//                try {
+//
+//                    this.validateCreateAirPort(airportRequest);
+//                    this.createAirportFunction(airportRequest);
+//                    this.createLocation(airportRequest.getLocation());
+//                    return "SUCCESS";
+//                }catch (Exception e){
+//                    log.error("ex ", e );
+//                    return "FAIL";
+//                }
+//            }));
+
+            try {
+                this.validateCreateAirPort(airportRequest);
+                this.createAirportFunction(airportRequest);
+                this.createLocation(airportRequest.getLocation());
+                totalSuccess++;
+            }catch (Exception e){
+                totalFail++;
+            }
+
+        }
+
+
+//        for (Future<String> future: futures){
+//
+//            if (future.get(5 , TimeUnit.SECONDS).equalsIgnoreCase("SUCCESS")){
+//                totalSuccess++;
+//            }else {
+//                totalFail++;
+//            }
+//        }
+
+        long endtime = System.currentTimeMillis();
+        Map<String, Object> response = new HashMap<>();
+
+        response.put("totalSuccess", totalSuccess);
+
+        response.put("totalFail", totalFail);
+        response.put("handletime", endtime - startTime);
+        return response;
+
+    }
+
+
+
     protected void createLocation(LocationRequest request){
 
         if (StringUtils.isBlank(request.getName()))
             throw new ApplicationException(ERROR_CODE.INVALID_PARAMETER , "location name is not empty");
         LocationEntity locationEntity = new LocationEntity();
-//        locationEntity.setName(request.getName());
+        locationEntity.setName(request.getName());
         locationEntity.setCode(request.getCode());
         locationEntity.setDescription(request.getDescription());
 

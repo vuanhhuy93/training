@@ -37,8 +37,8 @@ public class AirportController {
     }
 
     @PostMapping
-    public void createAirport(@RequestBody AirportRequest airportRequest) throws ApplicationException {
-        airportService.createAirport(airportRequest);
+    public Map<String, Object> createAirport(@RequestBody List<AirportRequest> airportRequest) throws Exception {
+        return airportService.createAirport2(airportRequest);
     }
 
     @PutMapping("/{iata}")

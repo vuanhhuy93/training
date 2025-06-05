@@ -38,6 +38,7 @@ public class SecurityConfig {
         publicApis.add("/v1/login");
         publicApis.add("/api/v1/login");
         publicApis.add("/js/**");
+        publicApis.add("/v1/airports/**");
         publicApis.add("/images/**");
         String[] array = new String[publicApis.size()];
         publicApis.toArray(array);
